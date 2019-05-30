@@ -48,9 +48,19 @@
  * You can print the string with printf() as there is an implicit \0 at the
  * end of the string. However the string is binary safe and can contain
  * \0 characters in the middle, as the length is stored in the sds header. */
+/**
+ * 功能：创建一个新的SDS对象
+ * 参数：
+ *  init - 若为空则会将申请的内存初始化为0；不为空则不对申请空间初始化，且
+ *         需要initlen不为0时，才会复制init到申请的内存空间中
+ *  initlen - 申请的SDS对象空间大小（sdshdr.buf），此大小不包含隐含的C字符串
+ *            结束符
+ * 注意：新申请的SDS对象预分配空间大小(sdshdr.free)为0
+ */
 sds sdsnewlen(const void *init, size_t initlen) {
     struct sdshdr *sh;
 
+    // 如果init为null，则会将申请的内存全部初始化为0
     if (init) {
         sh = zmalloc(sizeof(struct sdshdr)+initlen+1);
     } else {
@@ -67,6 +77,10 @@ sds sdsnewlen(const void *init, size_t initlen) {
 
 /* Create an empty (zero length) sds string. Even in this case the string
  * always has an implicit null term. */
+/**
+ * 功能：创建一个空的SDS对象，sdshdr.buf实际不是一个null，而是只包含'\0'的
+ *       一块内存空间
+ */
 sds sdsempty(void) {
     return sdsnewlen("",0);
 }
@@ -85,7 +99,7 @@ sds sdsdup(const sds s) {
 /* Free an sds string. No operation is performed if 's' is NULL. */
 void sdsfree(sds s) {
     if (s == NULL) return;
-    zfree(s-sizeof(struct sdshdr));
+    zfree(s-sizeof(struct sdshdr));  // 因为是变长结构体，释放一次即可
 }
 
 /* Set the sds string length to the length as obtained with strlen(), so
@@ -102,6 +116,7 @@ void sdsfree(sds s) {
  * The output will be "2", but if we comment out the call to sdsupdatelen()
  * the output will be "6" as the string was modified but the logical length
  * remains 6 bytes. */
+// 将SDS对象的长度更新为实际内容（C字符串）的长度，将多余的空间大小增加到free
 void sdsupdatelen(sds s) {
     struct sdshdr *sh = (void*) (s-(sizeof(struct sdshdr)));
     int reallen = strlen(s);
@@ -113,6 +128,8 @@ void sdsupdatelen(sds s) {
  * However all the existing buffer is not discarded but set as free space
  * so that next append operations will not require allocations up to the
  * number of bytes previously available. */
+// SDS的清空不需要实际清空数据，只需要更改sds.len和sds.free，并将sdshdr.buf[0]
+// 设置为'\0'即可
 void sdsclear(sds s) {
     struct sdshdr *sh = (void*) (s-(sizeof(struct sdshdr)));
     sh->free += sh->len;
@@ -126,12 +143,18 @@ void sdsclear(sds s) {
  *
  * Note: this does not change the *length* of the sds string as returned
  * by sdslen(), but only the free buffer space we have. */
+/**
+ * 功能：SDS的内存预分配 - 扩容free的空间
+ * 参数：
+ *  s - 需要预分配的SDS对象
+ *  addlen - 需要增加的内存大小，增加的是sdshdr.free
+ */
 sds sdsMakeRoomFor(sds s, size_t addlen) {
     struct sdshdr *sh, *newsh;
-    size_t free = sdsavail(s);
+    size_t free = sdsavail(s);  // 获取sds当前剩余的空间大小
     size_t len, newlen;
 
-    if (free >= addlen) return s;
+    if (free >= addlen) return s;  // 如果需要扩容的空间小于目前剩余的空间直接退出
     len = sdslen(s);
     sh = (void*) (s-(sizeof(struct sdshdr)));
     newlen = (len+addlen);
@@ -139,6 +162,7 @@ sds sdsMakeRoomFor(sds s, size_t addlen) {
         newlen *= 2;
     else
         newlen += SDS_MAX_PREALLOC;
+    // +1：需要存储C字符串结束符'\0'
     newsh = zrealloc(sh, sizeof(struct sdshdr)+newlen+1);
     if (newsh == NULL) return NULL;
 
@@ -197,6 +221,14 @@ size_t sdsAllocSize(sds s) {
  * ... check for nread <= 0 and handle it ...
  * sdsIncrLen(s, nread);
  */
+/**
+ * 功能：对sdshdr.len标记的空间进行扩容或缩减
+ * 参数：
+ *  incr - 当incr大于等于0时，对sdshdr.len标记的空间进行扩容，需要保证剩余的
+ *         空间(sdshdr.free标记)大于等于incr；
+ *         当incr小于0时，对sdshdr.len标记的空间进行缩减，需要保证sdshdr.buf
+ *         的实际空间大小(sdshdr.len标记)大于等于incr
+ */
 void sdsIncrLen(sds s, int incr) {
     struct sdshdr *sh = (void*) (s-(sizeof(struct sdshdr)));
 
@@ -214,11 +246,18 @@ void sdsIncrLen(sds s, int incr) {
  *
  * if the specified length is smaller than the current length, no operation
  * is performed. */
+/**
+ * 功能：对sdshdr.len标记的空间进行扩容，并对扩容的空间初始化为0
+ * 参数：
+ *  len - 扩容后的空间(sdshdr.len的大小)：若len小于等于sdshdr.len实际的空间则
+ *        不做任何处理；否则进行空间扩容，并将新增空间初始化为0
+ */
 sds sdsgrowzero(sds s, size_t len) {
     struct sdshdr *sh = (void*)(s-(sizeof(struct sdshdr)));
     size_t totlen, curlen = sh->len;
 
-    if (len <= curlen) return s;
+    if (len <= curlen) return s;  // 当前已用空间已经大于需要扩容后的空间
+    // 先扩展预分配空间，len-curlen需要扩容(预分配)的大小
     s = sdsMakeRoomFor(s,len-curlen);
     if (s == NULL) return NULL;
 
@@ -236,11 +275,13 @@ sds sdsgrowzero(sds s, size_t len) {
  *
  * After the call, the passed sds string is no longer valid and all the
  * references must be substituted with the new pointer returned by the call. */
+// 注意：拼接后传入的sds不可用，需要使用返回值sds
 sds sdscatlen(sds s, const void *t, size_t len) {
     struct sdshdr *sh;
     size_t curlen = sdslen(s);
 
-    s = sdsMakeRoomFor(s,len);
+    // 需要首先检测sds的剩余空间是否能够容纳需要连接的数据，不足是会进行扩容
+    s = sdsMakeRoomFor(s,len);  // 将s.free大小的空间扩容至len
     if (s == NULL) return NULL;
     sh = (void*) (s-(sizeof(struct sdshdr)));
     memcpy(s+curlen, t, len);
@@ -268,11 +309,19 @@ sds sdscatsds(sds s, const sds t) {
 
 /* Destructively modify the sds string 's' to hold the specified binary
  * safe string pointed by 't' of length 'len' bytes. */
+/**
+ * 功能：将C字符串t复制到SDS对象s中
+ * 参数：
+ *  s - 复制的目标对象
+ *  t - 被复制的源对象，C字符串
+ *  len - 需要复制的大小
+ * 注意：如果s对象的空间不足存储len大小的t时，会自动进行sds的扩容
+ */
 sds sdscpylen(sds s, const char *t, size_t len) {
     struct sdshdr *sh = (void*) (s-(sizeof(struct sdshdr)));
-    size_t totlen = sh->free+sh->len;
+    size_t totlen = sh->free+sh->len;  // SDS对象空间大小（不包括结束符）
 
-    if (totlen < len) {
+    if (totlen < len) {  // 检查是否需要对SDS对象进行扩容
         s = sdsMakeRoomFor(s,len-sh->len);
         if (s == NULL) return NULL;
         sh = (void*) (s-(sizeof(struct sdshdr)));
@@ -362,6 +411,7 @@ int sdsull2str(char *s, unsigned long long v) {
  *
  * sdscatprintf(sdsempty(),"%lld\n", value);
  */
+// 将value转换为SDS对象
 sds sdsfromlonglong(long long value) {
     char buf[SDS_LLSTR_SIZE];
     int len = sdsll2str(buf,value);
@@ -562,6 +612,8 @@ sds sdscatfmt(sds s, char const *fmt, ...) {
  *
  * Output will be just "Hello World".
  */
+// 惰性释放内存空间：并没有真正的释放空间，将空出来的空间保留，通过sdshdr.free
+// 的增加来表示
 sds sdstrim(sds s, const char *cset) {
     struct sdshdr *sh = (void*) (s-(sizeof(struct sdshdr)));
     char *start, *end, *sp, *ep;
